@@ -409,9 +409,8 @@ keyboard = "jis"   # "ansi" (default), "iso" or "jis"; also --keyboard jis
 
 With a Japanese keyboard set `keyboard = "jis"` and select the Japanese layout
 in the PROM. The ¥, ろ (`\_`), 無変換, 変換 and かな keys are sent too.
-In iris-gui the setting is **Keyboard** on the Display tab. There, ろ and the conversion keys aren't seen by its toolkit (egui):
-ろ types `\` (never `_`) and 無変換/変換/かな do nothing. Use the
-standalone `iris` window if you need them.
+In iris-gui the setting is **Keyboard** on the Display tab, and every key,
+ろ and the conversion keys included, works as in the standalone window.
 
 The window is freely resizable. At 1× and 2× scale the display is rendered with nearest-neighbour pixel-perfect sampling; at all other sizes trilinear filtering with mipmaps is used. `lock_aspect_ratio = false` in `iris.toml` allows free resizing with letterboxing.
 

@@ -382,6 +382,10 @@ required-features = ["jitv2", "j2wp"]
 # See rules/macos/appstore-private-api.md.
 [patch.crates-io]
 winit = { path = "third_party/winit-0.30.13" }
+# Records raw winit key events before egui translates them, so iris-gui can
+# send the guest keys egui::Key can't name (JIS ro/yen/henkan, numpad, lock
+# keys). See third_party/egui-winit-0.36.2/IRIS-PATCH.md.
+egui-winit = { path = "third_party/egui-winit-0.36.2" }
 # block 0.1.6 is that crate's final release (2016) and declares a static of an
 # uninhabited type, a future hard error (rust#74840). Reached only on macOS, via
 # nokhwa -> cocoa/metal. The vendored copy makes `Class` opaque-but-inhabited, as

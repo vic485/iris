@@ -2209,11 +2209,11 @@ impl App {
                 if response.clicked() { response.request_focus(); fb_clicked = true; }
                 // While captured, keep focus pinned to the framebuffer and claim
                 // the focus-navigation keys. By default egui's focus engine
-                // treats Tab / arrow keys / Esc as widget navigation: it moves
-                // focus off the framebuffer (and the widget it lands on can then
-                // swallow later keystrokes), so those keys never reach the guest.
-                // Locking the filter tells egui they belong to us — they stay in
-                // the event stream and pump() forwards them. Plain Esc still
+                // treats Tab / arrow keys / Esc as widget navigation and moves
+                // focus off the framebuffer onto a side-panel widget. pump()
+                // takes keys from the raw egui-winit tap, so the guest gets them
+                // either way; locking the filter stops egui acting on them too.
+                // Plain Esc still
                 // reaches the guest; the Ctrl+Alt+Esc release chord is detected
                 // globally in pump(), before any key is forwarded.
                 if captured {

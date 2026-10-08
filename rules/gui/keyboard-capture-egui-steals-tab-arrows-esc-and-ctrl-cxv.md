@@ -1,5 +1,10 @@
 # Keyboard capture: egui steals Tab/arrows/Esc, and egui-winit eats Ctrl+C/X/V
 
+**Superseded in part (2026-10):** iris-gui now reads keys from a raw winit tap,
+not egui events, so causes 2 and 3 and "What is NOT fixable" no longer apply.
+Cause 1 (the focus lock) still does. See
+[raw-winit-keys-egui-winit-patch.md](raw-winit-keys-egui-winit-patch.md).
+
 Status: confirmed fix (2026-06-19). When the framebuffer has keyboard capture,
 some keys never reach the guest. There are **three independent causes**, all in
 the egui/egui-winit layer, none in iris's own keymap. If "key X doesn't reach

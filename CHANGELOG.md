@@ -51,6 +51,13 @@ hashes are given where a change is easiest to understand by reading the commit.
 
 ### iris-gui
 
+- **Every host key reaches the guest, as in the standalone window.** The
+  GUI took keys from egui, whose `Key` has no JIS ろ/¥/変換/無変換/かな, no
+  separate numpad and no lock keys, so Shift+ろ (`_`) typed nothing and
+  numpad keys arrived as the main row. A patched egui-winit
+  (`third_party/egui-winit-0.36.2`) now records raw winit key events, and
+  the GUI sends those physical keys in order while captured. Ctrl+C/X/V no
+  longer need re-synthesising from egui's clipboard events.
 - **NVRAM EEPROM gets the same stable-path treatment as NVRAM.** `nveeprom`
   (Indigo2/IP28's motherboard EEPROM — where `eaddr` and PROM env actually live
   on those profiles, not in the NVRAM file) used to default to a bare

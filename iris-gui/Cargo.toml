@@ -90,6 +90,9 @@ hostgl = ["hostcall", "iris/hostgl"]
 iris = { path = "..", features = ["rex-jit"] }
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 egui = "0.36"
+# Patched copy (third_party/egui-winit-0.36.2): raw_keys::drain() gives the
+# physical key events egui::Key can't name. Features come from eframe.
+egui-winit = { version = "0.36", default-features = false }
 crossbeam-channel = "0.5"
 parking_lot = "0.12"
 # Match iris's winit version — Ps2Controller::push_kb takes

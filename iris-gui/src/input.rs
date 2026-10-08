@@ -1,4 +1,4 @@
-//! Translate egui keyboard / pointer events into iris PS2 controller writes.
+//! Translate host keyboard / pointer events into iris PS2 controller writes.
 //!
 //! ## Mouse / keyboard capture
 //!
@@ -12,8 +12,9 @@
 //! regardless of grab), which we feed straight to the guest. Only the guest's
 //! own pointer is visible, so there is nothing to misalign. `RELEASE_CHORD` releases.
 //!
-//! While captured we also forward keyboard input to the guest; while *not*
-//! captured we forward nothing, so menu clicks and typing into the config
+//! While captured we also forward keyboard input to the guest, as physical
+//! winit KeyCodes from the patched egui-winit's `raw_keys` tap (not egui's
+//! `Event::Key`, which can't name every key); while *not* captured we forward nothing, so menu clicks and typing into the config
 //! side panel stay with egui.
 //!
 //! The framebuffer panel calls `pump(...)` each frame, passing whether the REX3
@@ -82,6 +83,15 @@ pub fn pump(ctx: &egui::Context, fb_clicked: bool, ps2: &Ps2Controller, state: &
     let mut buttons = state.last_buttons;
     let mut keys: Vec<(KeyCode, bool)> = Vec::new();
     let mut f11_to_guest = false;
+    let mut ctrl_alt = false;
+
+    // Keys come from the patched egui-winit's raw tap, not egui's `Event::Key`:
+    // `egui::Key` can't name the JIS keys, the numpad or the lock keys,
+    // egui-winit turns Ctrl+C/X/V into clipboard commands, and the host layout
+    // would leak into the logical key. These are physical winit KeyCodes, in
+    // order, exactly what the standalone window sends. Drain every frame so
+    // keys typed into the side panel never reach the guest later.
+    let raw_keys = egui_winit::raw_keys::drain();
 
     ctx.input(|i| {
         if !state.captured {
@@ -95,44 +105,13 @@ pub fn pump(ctx: &egui::Context, fb_clicked: bool, ps2: &Ps2Controller, state: &
 
         // Captured. RELEASE_CHORD releases (see below); Ctrl+Alt+Esc still works as an explicit fallback, and a real focus loss (alt-tab) releases after a grace period so a one-frame flicker doesn't drop capture mid-typing.
         esc_chord = i.key_pressed(Key::Escape) && i.modifiers.ctrl && i.modifiers.alt;
+        ctrl_alt = i.modifiers.ctrl && i.modifiers.alt;
         focused = i.focused;
 
         for ev in &i.events {
             match ev {
                 // Raw relative motion (eframe → DeviceEvent::MouseMotion).
                 Event::MouseMoved(d) => { dx += d.x; dy += d.y; }
-                // Prefer the physical position: `key` is already layout-translated by the host, and the guest applies its own `keybd=` layout on top, which mangles every non-US layout.
-                Event::Key { key, physical_key, pressed, repeat, .. } => {
-                    let k = physical_key.unwrap_or(*key);
-                    // egui has no Key for the JIS-only keys (IntlYen, IntlRo, Henkan...),
-                    // so they arrive here with no physical key and their logical `\` or `|`.
-                    // A physical `\|` key always has a physical_key, so this is the ¥ (or ろ)
-                    // key: send ¥, which is the ANSI backslash code in set 3 but not the JIS
-                    // `]}` key that Backslash becomes with `keyboard = "jis"`.
-                    let jis_fallback = physical_key.is_none() && matches!(k, Key::Backslash | Key::Pipe);
-                    if jis_fallback {
-                        keys.push((KeyCode::IntlYen, *pressed));
-                    } else if k == Key::F11 {
-                        // Plain F11 is the GUI's fullscreen toggle; Ctrl+Alt+F11 is the escape hatch that sends a bare F11 to IRIX.
-                        if *pressed && !*repeat && i.modifiers.ctrl && i.modifiers.alt {
-                            f11_to_guest = true;
-                        }
-                    } else if let Some(kc) = map_key(k) {
-                        keys.push((kc, *pressed));
-                    }
-                }
-                // egui-winit swallows Ctrl/Cmd + C/X/V into clipboard *commands*
-                // (Cut/Copy/Paste) and never emits the underlying Key event — so
-                // on Linux and Windows, where `command == ctrl`, the guest would
-                // never see Ctrl+C (SIGINT in a shell), Ctrl+X, or Ctrl+V. Re-
-                // synthesise the bare letter as a tap; the held Ctrl is already
-                // sent by the modifier diff below, so the guest forms the full
-                // chord. Gated on `ctrl` so macOS Cmd+C/X/V — where real Ctrl+C
-                // still arrives as a normal Key, and the Cmd combo has no guest
-                // meaning — is left to the host clipboard.
-                Event::Copy     if i.modifiers.ctrl => { keys.push((KeyCode::KeyC, true)); keys.push((KeyCode::KeyC, false)); }
-                Event::Cut      if i.modifiers.ctrl => { keys.push((KeyCode::KeyX, true)); keys.push((KeyCode::KeyX, false)); }
-                Event::Paste(_) if i.modifiers.ctrl => { keys.push((KeyCode::KeyV, true)); keys.push((KeyCode::KeyV, false)); }
                 Event::MouseWheel { unit, delta, .. } => {
                     let lines = match unit {
                         MouseWheelUnit::Line => delta.y,
@@ -174,6 +153,17 @@ pub fn pump(ctx: &egui::Context, fb_clicked: bool, ps2: &Ps2Controller, state: &
     if want_enter {
         engage_capture(ctx, state);
         return;
+    }
+
+    if state.captured {
+        for k in raw_keys {
+            if k.code == KeyCode::F11 {
+                // Plain F11 is the GUI's fullscreen toggle; Ctrl+Alt+F11 is the escape hatch that sends a bare F11 to IRIX.
+                if k.pressed && !k.repeat && ctrl_alt { f11_to_guest = true; }
+                continue;
+            }
+            keys.push((k.code, k.pressed));
+        }
     }
 
     if want_release {
@@ -257,6 +247,8 @@ fn grab_mode() -> CursorGrab {
 pub fn engage_capture(ctx: &egui::Context, state: &mut InputState) {
     if state.captured { return; }
     state.captured = true;
+    // Keys typed before capture (into the side panel, say) stay with egui.
+    let _ = egui_winit::raw_keys::drain();
     // Anchor modifier/button state so we don't leave a stale key held from before capture.
     state.held_mods.clear();
     state.chord_consumed = false;
@@ -293,74 +285,4 @@ pub fn force_release(ctx: &egui::Context, state: &mut InputState) {
     state.unfocused_since = None;
     ctx.send_viewport_cmd(ViewportCommand::CursorVisible(true));
     ctx.send_viewport_cmd(ViewportCommand::CursorGrab(CursorGrab::None));
-}
-
-
-/// egui::Key (a physical position, per the caller) → winit KeyCode; None for keys iris's scancode mapper doesn't recognise.
-fn map_key(k: Key) -> Option<KeyCode> {
-    Some(match k {
-        // Letters
-        Key::A => KeyCode::KeyA, Key::B => KeyCode::KeyB, Key::C => KeyCode::KeyC,
-        Key::D => KeyCode::KeyD, Key::E => KeyCode::KeyE, Key::F => KeyCode::KeyF,
-        Key::G => KeyCode::KeyG, Key::H => KeyCode::KeyH, Key::I => KeyCode::KeyI,
-        Key::J => KeyCode::KeyJ, Key::K => KeyCode::KeyK, Key::L => KeyCode::KeyL,
-        Key::M => KeyCode::KeyM, Key::N => KeyCode::KeyN, Key::O => KeyCode::KeyO,
-        Key::P => KeyCode::KeyP, Key::Q => KeyCode::KeyQ, Key::R => KeyCode::KeyR,
-        Key::S => KeyCode::KeyS, Key::T => KeyCode::KeyT, Key::U => KeyCode::KeyU,
-        Key::V => KeyCode::KeyV, Key::W => KeyCode::KeyW, Key::X => KeyCode::KeyX,
-        Key::Y => KeyCode::KeyY, Key::Z => KeyCode::KeyZ,
-        // Digits
-        Key::Num0 => KeyCode::Digit0, Key::Num1 => KeyCode::Digit1,
-        Key::Num2 => KeyCode::Digit2, Key::Num3 => KeyCode::Digit3,
-        Key::Num4 => KeyCode::Digit4, Key::Num5 => KeyCode::Digit5,
-        Key::Num6 => KeyCode::Digit6, Key::Num7 => KeyCode::Digit7,
-        Key::Num8 => KeyCode::Digit8, Key::Num9 => KeyCode::Digit9,
-        // Navigation / editing
-        Key::Escape    => KeyCode::Escape,
-        Key::Tab       => KeyCode::Tab,
-        Key::Backspace => KeyCode::Backspace,
-        Key::Enter     => KeyCode::Enter,
-        Key::Space     => KeyCode::Space,
-        Key::Insert    => KeyCode::Insert,
-        Key::Delete    => KeyCode::Delete,
-        Key::Home      => KeyCode::Home,
-        Key::End       => KeyCode::End,
-        Key::PageUp    => KeyCode::PageUp,
-        Key::PageDown  => KeyCode::PageDown,
-        Key::ArrowUp    => KeyCode::ArrowUp,
-        Key::ArrowDown  => KeyCode::ArrowDown,
-        Key::ArrowLeft  => KeyCode::ArrowLeft,
-        Key::ArrowRight => KeyCode::ArrowRight,
-        // Punctuation
-        Key::Comma        => KeyCode::Comma,
-        Key::Period       => KeyCode::Period,
-        Key::Slash        => KeyCode::Slash,
-        Key::Backslash    => KeyCode::Backslash,
-        Key::Minus        => KeyCode::Minus,
-        Key::Equals       => KeyCode::Equal,
-        Key::Plus         => KeyCode::Equal, // shifted: same physical key
-        Key::Semicolon    => KeyCode::Semicolon,
-        Key::Colon        => KeyCode::Semicolon,
-        Key::Quote        => KeyCode::Quote,
-        Key::OpenBracket  => KeyCode::BracketLeft,
-        Key::CloseBracket => KeyCode::BracketRight,
-        Key::Backtick     => KeyCode::Backquote,
-        // Only reachable on the logical fallback (no physical_key): shifted symbols sharing a key with Backslash/Slash.
-        Key::Pipe         => KeyCode::Backslash,
-        Key::Questionmark => KeyCode::Slash,
-        // ISO 102nd key (< > |), left of Z on European keyboards — new in egui 0.35.
-        Key::IntlBackslash => KeyCode::IntlBackslash,
-        // Modifiers as real L/R keys (egui 0.35); AltRight is AltGr, which the guest needs for @ \ | { } [ ] ~ on DE/de_CH.
-        Key::ShiftLeft   => KeyCode::ShiftLeft,   Key::ShiftRight   => KeyCode::ShiftRight,
-        Key::ControlLeft => KeyCode::ControlLeft, Key::ControlRight => KeyCode::ControlRight,
-        Key::AltLeft     => KeyCode::AltLeft,     Key::AltRight     => KeyCode::AltRight,
-        Key::SuperLeft   => KeyCode::SuperLeft,   Key::SuperRight   => KeyCode::SuperRight,
-        // F11 is reserved by the GUI (fullscreen); iris's scancode sets stop at F12, so F13+ are dropped.
-        Key::F1 => KeyCode::F1, Key::F2 => KeyCode::F2, Key::F3  => KeyCode::F3,
-        Key::F4 => KeyCode::F4, Key::F5 => KeyCode::F5, Key::F6  => KeyCode::F6,
-        Key::F7 => KeyCode::F7, Key::F8 => KeyCode::F8, Key::F9  => KeyCode::F9,
-        Key::F10 => KeyCode::F10,
-        Key::F12 => KeyCode::F12,
-        _ => return None,
-    })
 }

@@ -126,8 +126,6 @@ sends `0x5C` for ANSI and `0x53` for key 42. With the PROM on the JP layout,
 `<BKSL>` 100 → **0x5C**, `<AB11>` (ろ) 89 → 0x51, NFER/XFER/HKTG → 0x85/0x86/0x87,
 HZTG = 0x0E (the Backquote position). pc102 `<BKSL>` = 91 → ISO key 42 is 0x53.
 
-egui (0.36) has no `Key` for IntlRo/IntlYen/Convert/NonConvert/KanaMode, so in
-iris-gui those keys arrive with no `physical_key` and only a logical fallback.
-`pump()` sends a physical-less `\`/`|` as `IntlYen`, so ¥ works and ろ types `\`. Shifted ろ (`_`)
-and the conversion keys are lost in the GUI. Fixing that needs egui-winit
-changes.
+egui (0.36) has no `Key` for IntlRo/IntlYen/Convert/NonConvert/KanaMode. iris-gui
+no longer reads keys from egui at all; see
+[raw-winit-keys-egui-winit-patch.md](raw-winit-keys-egui-winit-patch.md).
